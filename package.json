@@ -14,6 +14,7 @@
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
+    "test": "vitest run",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -34,11 +35,11 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
+    "@anatine/zod-mock": "^3.13.5",
+    "@faker-js/faker": "^9.6.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.8",
-    "zod-to-json-schema": "^3.24.1",
-    "@anatine/zod-mock": "^3.13.5",
-    "@faker-js/faker": "^9.6.0"
+    "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
@@ -49,6 +50,7 @@
     "husky": "^9.1.7",
     "prettier": "^3.8.3",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   }
 }
