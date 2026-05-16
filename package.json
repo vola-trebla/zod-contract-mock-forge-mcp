@@ -19,12 +19,11 @@
     "prepare": "husky"
   },
   "lint-staged": {
-    "src/**/*.ts": [
-      "prettier --write",
-      "eslint --fix"
-    ],
-    "package.json": [
+    "**/*.{ts,mjs,json,md}": [
       "prettier --write"
+    ],
+    "src/**/*.ts": [
+      "eslint --fix"
     ]
   },
   "files": [
