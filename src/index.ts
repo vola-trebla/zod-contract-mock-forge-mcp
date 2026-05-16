@@ -39,13 +39,17 @@ export function parseZodSchema(schemaCode: string): z.ZodTypeAny {
 /**
  * Generates intentional boundary violations based on a Zod schema.
  */
-export function generateViolations(schema: z.ZodTypeAny): Array<{ type: string; payload: any; description: string }> {
+export function generateViolations(
+  schema: z.ZodTypeAny
+): Array<{ type: string; payload: any; description: string }> {
   const violations: Array<{ type: string; payload: any; description: string }> = [];
   const baseMock = generateMock(schema);
 
-  function clone(obj: any) {
-    return JSON.parse(JSON.stringify(obj));
-  }
+  const addViolation = (path: string[], type: string, value: any, description: string) => {
+    const payload = structuredClone(baseMock);
+    setAtPath(payload, path, value);
+    violations.push({ type, payload, description });
+  };
 
   function setAtPath(obj: any, path: string[], value: any) {
     let current = obj;
@@ -73,94 +77,37 @@ export function generateViolations(schema: z.ZodTypeAny): Array<{ type: string; 
       target instanceof z.ZodNullable ||
       target instanceof z.ZodDefault
     ) {
-      if (target instanceof z.ZodOptional) {
-        target = target.unwrap();
-      } else if (target instanceof z.ZodNullable) {
-        target = target.unwrap();
-      } else if (target instanceof z.ZodDefault) {
-        target = target._def.innerType;
-      }
+      if (target instanceof z.ZodOptional) target = target.unwrap();
+      else if (target instanceof z.ZodNullable) target = target.unwrap();
+      else if (target instanceof z.ZodDefault) target = target._def.innerType;
     }
 
     const pathStr = path.length > 0 ? path.join(".") : "root";
 
     if (target instanceof z.ZodString) {
-      const p = clone(baseMock);
-      setAtPath(p, path, 12345);
-      violations.push({
-        type: "TYPE_MISMATCH",
-        payload: p,
-        description: `Field '${pathStr}' expected string, got number.`,
-      });
-
+      addViolation(path, "TYPE_MISMATCH", 12345, `Field '${pathStr}' expected string, got number.`);
       const checks = (target as z.ZodString)._def.checks;
       for (const check of checks) {
-        if (check.kind === "email") {
-          const p2 = clone(baseMock);
-          setAtPath(p2, path, "invalid-email");
-          violations.push({
-            type: "INVALID_EMAIL",
-            payload: p2,
-            description: `Field '${pathStr}' expected valid email.`,
-          });
-        }
-        if (check.kind === "url") {
-          const p2 = clone(baseMock);
-          setAtPath(p2, path, "not-a-url");
-          violations.push({
-            type: "INVALID_URL",
-            payload: p2,
-            description: `Field '${pathStr}' expected valid URL.`,
-          });
-        }
-        if (check.kind === "uuid") {
-          const p2 = clone(baseMock);
-          setAtPath(p2, path, "not-a-uuid");
-          violations.push({
-            type: "INVALID_UUID",
-            payload: p2,
-            description: `Field '${pathStr}' expected valid UUID.`,
-          });
-        }
+        if (check.kind === "email")
+          addViolation(path, "INVALID_EMAIL", "invalid-email", `Field '${pathStr}' expected valid email.`);
+        if (check.kind === "url")
+          addViolation(path, "INVALID_URL", "not-a-url", `Field '${pathStr}' expected valid URL.`);
+        if (check.kind === "uuid")
+          addViolation(path, "INVALID_UUID", "not-a-uuid", `Field '${pathStr}' expected valid UUID.`);
       }
     } else if (target instanceof z.ZodNumber) {
-      const p = clone(baseMock);
-      setAtPath(p, path, "not-a-number");
-      violations.push({
-        type: "TYPE_MISMATCH",
-        payload: p,
-        description: `Field '${pathStr}' expected number, got string.`,
-      });
-
+      addViolation(path, "TYPE_MISMATCH", "not-a-number", `Field '${pathStr}' expected number, got string.`);
       const checks = (target as z.ZodNumber)._def.checks;
       for (const check of checks) {
-        if (check.kind === "min") {
-          const p2 = clone(baseMock);
-          setAtPath(p2, path, (check as any).value - 1);
-          violations.push({
-            type: "MIN_VALUE_VIOLATION",
-            payload: p2,
-            description: `Field '${pathStr}' expected min ${(check as any).value}.`,
-          });
-        }
-        if (check.kind === "max") {
-          const p2 = clone(baseMock);
-          setAtPath(p2, path, (check as any).value + 1);
-          violations.push({
-            type: "MAX_VALUE_VIOLATION",
-            payload: p2,
-            description: `Field '${pathStr}' expected max ${(check as any).value}.`,
-          });
-        }
+        if (check.kind === "min")
+          addViolation(path, "MIN_VALUE_VIOLATION", (check as any).value - 1, `Field '${pathStr}' expected min ${(check as any).value}.`);
+        if (check.kind === "max")
+          addViolation(path, "MAX_VALUE_VIOLATION", (check as any).value + 1, `Field '${pathStr}' expected max ${(check as any).value}.`);
       }
     } else if (target instanceof z.ZodBoolean) {
-      const p = clone(baseMock);
-      setAtPath(p, path, "not-a-boolean");
-      violations.push({
-        type: "TYPE_MISMATCH",
-        payload: p,
-        description: `Field '${pathStr}' expected boolean, got string.`,
-      });
+      addViolation(path, "TYPE_MISMATCH", "not-a-boolean", `Field '${pathStr}' expected boolean, got string.`);
+    } else if (target instanceof z.ZodEnum) {
+      addViolation(path, "INVALID_ENUM_VALUE", "invalid_enum_val", `Field '${pathStr}' expected one of: ${(target as z.ZodEnum<any>)._def.values.join(", ")}`);
     } else if (target instanceof z.ZodObject) {
       const shape = target.shape;
       for (const key in shape) {
@@ -176,15 +123,8 @@ export function generateViolations(schema: z.ZodTypeAny): Array<{ type: string; 
         }
 
         if (!isFieldOptional) {
-          const p = clone(baseMock);
-          setAtPath(p, fieldPath, undefined);
-          violations.push({
-            type: "MISSING_REQUIRED_FIELD",
-            payload: p,
-            description: `Field '${fieldPath.join(".")}' is required.`,
-          });
+          addViolation(fieldPath, "MISSING_REQUIRED_FIELD", undefined, `Field '${fieldPath.join(".")}' is required.`);
         }
-
         walk(fieldSchema, fieldPath);
       }
     } else if (target instanceof z.ZodArray) {
@@ -197,15 +137,8 @@ export function generateViolations(schema: z.ZodTypeAny): Array<{ type: string; 
       const checks = (target as any)._def.checks;
       if (checks) {
         for (const check of checks) {
-          if (check.kind === "min") {
-            const p = clone(baseMock);
-            setAtPath(p, path, []);
-            violations.push({
-              type: "MIN_LENGTH_VIOLATION",
-              payload: p,
-              description: `Field '${pathStr}' expected min length ${(check as any).value}.`,
-            });
-          }
+          if (check.kind === "min")
+            addViolation(path, "MIN_LENGTH_VIOLATION", [], `Field '${pathStr}' expected min length ${(check as any).value}.`);
         }
       }
     }
