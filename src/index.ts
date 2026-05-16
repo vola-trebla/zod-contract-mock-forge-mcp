@@ -3,6 +3,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import process from "node:process";
+import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { generateMock } from "@anatine/zod-mock";
@@ -244,6 +245,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "read_schema_from_file",
+        description: "Read a Zod schema directly from a file in the workspace",
+        inputSchema: {
+          type: "object",
+          properties: {
+            filePath: {
+              type: "string",
+              description: "Path to the .ts or .js file containing the Zod schema",
+            },
+            exportName: {
+              type: "string",
+              description: "Name of the exported schema variable (optional, if not provided it will try to find any Zod object)",
+            },
+          },
+          required: ["filePath"],
+        },
+      },
+      {
         name: "generate_valid_mock",
         description: "Generate valid mock data from a Zod schema",
         inputSchema: {
@@ -294,6 +313,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const jsonSchema = zodToJsonSchema(schema);
       return {
         content: [{ type: "text", text: JSON.stringify(jsonSchema, null, 2) }],
+      };
+    }
+
+    if (name === "read_schema_from_file") {
+      const filePath = String(args?.filePath);
+      const exportName = args?.exportName ? String(args?.exportName) : undefined;
+      
+      const content = await readFile(filePath, "utf-8");
+      
+      let schemaCode = "";
+      
+      if (exportName) {
+        // Try to find the specific export
+        const regex = new RegExp(`(?:export\\s+)?(?:const|let|var)\\s+${exportName}\\s*=\\s*([\\s\\S]*?)(?:;|$)`, "m");
+        const match = content.match(regex);
+        if (match) {
+          schemaCode = match[1].trim();
+        } else {
+          throw new Error(`Could not find export '${exportName}' in ${filePath}`);
+        }
+      } else {
+        // Try to find anything that looks like a Zod object
+        const zodRegex = /z\.(object|array|string|number|boolean|enum|record)\([\s\S]*?\)/m;
+        const match = content.match(zodRegex);
+        if (match) {
+          schemaCode = match[0].trim();
+        } else {
+          // If no Zod match, just return the content and let the LLM handle it
+          return {
+            content: [
+              { type: "text", text: `Could not automatically extract Zod schema from ${filePath}. Returning raw content:` },
+              { type: "text", text: content }
+            ],
+          };
+        }
+      }
+
+      return {
+        content: [
+          { type: "text", text: `Extracted schema from ${filePath}:` },
+          { type: "text", text: schemaCode }
+        ],
       };
     }
 
