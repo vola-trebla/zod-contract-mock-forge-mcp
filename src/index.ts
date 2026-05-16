@@ -300,6 +300,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["endpoint", "schemaCode"],
         },
       },
+      {
+        name: "suggest_contract_fix",
+        description: "Suggest fixes for Zod validation errors, either by modifying the schema or the payload",
+        inputSchema: {
+          type: "object",
+          properties: {
+            schemaCode: { type: "string" },
+            payload: { type: "string", description: "JSON string of the failing payload" },
+          },
+          required: ["schemaCode", "payload"],
+        },
+      },
     ],
   };
 });
@@ -404,6 +416,47 @@ test('${testName}', async ({ request }) => {
 
       return {
         content: [{ type: "text", text: testCode }],
+      };
+    }
+
+    if (name === "suggest_contract_fix") {
+      const schema = parseZodSchema(String(args?.schemaCode));
+      let payloadObj;
+      try {
+        payloadObj = JSON.parse(String(args?.payload));
+      } catch (e) {
+        throw new Error("Payload must be valid JSON");
+      }
+
+      const result = schema.safeParse(payloadObj);
+      if (result.success) {
+        return {
+          content: [{ type: "text", text: "The payload is valid against the schema. No fixes needed." }],
+        };
+      }
+
+      const issues = result.error.issues;
+      let suggestions = "Contract Violation Detected.\\n\\n";
+      
+      issues.forEach((issue, index) => {
+        const path = issue.path.length > 0 ? issue.path.join(".") : "root";
+        suggestions += `Issue ${index + 1}: At '${path}', ${issue.message}\\n`;
+        suggestions += `  -> To fix data: Ensure the payload provides a valid value for '${path}'.\\n`;
+        
+        let schemaFix = `If this is expected, you might need to make '${path}' optional(), nullable(), or change its type.`;
+        if (issue.code === "invalid_type" && issue.received === "undefined") {
+          schemaFix = `Make '${path}' optional: z...optional()`;
+        } else if (issue.code === "invalid_type" && issue.received === "null") {
+          schemaFix = `Make '${path}' nullable: z...nullable()`;
+        } else if (issue.code === "invalid_type") {
+          schemaFix = `Change the type of '${path}' to match the received type (${issue.received}).`;
+        }
+        
+        suggestions += `  -> To fix schema: ${schemaFix}\\n\\n`;
+      });
+
+      return {
+        content: [{ type: "text", text: suggestions }],
       };
     }
 
