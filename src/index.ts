@@ -287,10 +287,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "scaffold_api_contract_test",
-        description: "Generate a Playwright API contract test boilerplate",
+        description: "Generate an API contract test or mock boilerplate for various frameworks",
         inputSchema: {
           type: "object",
           properties: {
+            framework: { 
+              type: "string", 
+              enum: ["playwright", "jest", "vitest", "msw"], 
+              default: "playwright",
+              description: "The testing framework or tool to generate code for"
+            },
             baseUrl: { type: "string", default: "http://localhost:3000" },
             endpoint: { type: "string", description: "e.g., /api/users" },
             method: { type: "string", enum: ["GET", "POST", "PUT", "DELETE", "PATCH"], default: "GET" },
@@ -388,9 +394,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === "scaffold_api_contract_test") {
-      const { baseUrl, endpoint, method, schemaCode, testName } = args as any;
+      const { framework, baseUrl, endpoint, method, schemaCode, testName } = args as any;
+      const fw = framework || "playwright";
       
-      const testCode = `
+      let testCode = "";
+
+      if (fw === "playwright") {
+        testCode = `
 import { test, expect } from '@playwright/test';
 import { z } from 'zod';
 
@@ -398,21 +408,45 @@ const schema = ${schemaCode};
 
 test('${testName}', async ({ request }) => {
   const response = await request.${method.toLowerCase()}('${baseUrl}${endpoint}');
-  
   expect(response.ok()).toBeTruthy();
-  
   const body = await response.json();
-  
-  // Validate contract
   const result = schema.safeParse(body);
-  
   if (!result.success) {
     console.error('Contract violation:', result.error.format());
   }
-  
   expect(result.success).toBe(true);
-});
-`.trim();
+});`.trim();
+      } else if (fw === "jest" || fw === "vitest") {
+        const imp = fw === "vitest" ? "import { test, expect } from 'vitest';" : "";
+        testCode = `
+${imp}
+import { z } from 'zod';
+import axios from 'axios';
+
+const schema = ${schemaCode};
+
+test('${testName}', async () => {
+  const response = await axios.${method.toLowerCase()}('${baseUrl}${endpoint}');
+  const result = schema.safeParse(response.data);
+  if (!result.success) {
+    console.error('Contract violation:', result.error.format());
+  }
+  expect(result.success).toBe(true);
+});`.trim();
+      } else if (fw === "msw") {
+        testCode = `
+import { http, HttpResponse } from 'msw';
+import { z } from 'zod';
+
+const schema = ${schemaCode};
+
+export const handlers = [
+  http.${method.toLowerCase()}('${baseUrl}${endpoint}', () => {
+    // You can use generate_valid_mock tool to get a payload
+    return HttpResponse.json({ /* mock data */ });
+  }),
+];`.trim();
+      }
 
       return {
         content: [{ type: "text", text: testCode }],
