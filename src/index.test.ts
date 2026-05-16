@@ -31,10 +31,12 @@ describe("Forge Core Logic", () => {
         }),
       });
       const violations = generateViolations(schema);
-      
-      const ageViolation = violations.find(v => v.description.includes("user.age") && v.type === "MIN_VALUE_VIOLATION");
+
+      const ageViolation = violations.find(
+        (v) => v.description.includes("user.age") && v.type === "MIN_VALUE_VIOLATION"
+      );
       expect(ageViolation).toBeDefined();
-      expect(ageViolation?.payload.user.age).toBeLessThan(18);
+      expect((ageViolation?.payload as any).user.age).toBeLessThan(18);
     });
 
     it("should generate violations for required fields", () => {
@@ -43,10 +45,12 @@ describe("Forge Core Logic", () => {
         email: z.string().email(),
       });
       const violations = generateViolations(schema);
-      
-      const nameViolation = violations.find(v => v.type === "MISSING_REQUIRED_FIELD" && v.description.includes("name"));
+
+      const nameViolation = violations.find(
+        (v) => v.type === "MISSING_REQUIRED_FIELD" && v.description.includes("name")
+      );
       expect(nameViolation).toBeDefined();
-      expect(nameViolation?.payload.name).toBeUndefined();
+      expect((nameViolation?.payload as any).name).toBeUndefined();
     });
   });
 });

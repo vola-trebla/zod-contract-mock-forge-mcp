@@ -84,12 +84,7 @@ export function generateViolations(
             `Field '${pathStr}' expected valid email.`
           );
         if (check.kind === "url")
-          addViolation(
-            path,
-            "INVALID_URL",
-            "not-a-url",
-            `Field '${pathStr}' expected valid URL.`
-          );
+          addViolation(path, "INVALID_URL", "not-a-url", `Field '${pathStr}' expected valid URL.`);
         if (check.kind === "uuid")
           addViolation(
             path,
@@ -209,9 +204,7 @@ server.registerTool(
       "Convert a Zod schema string to JSON Schema for LLM understanding. " +
       "Use to answer: what is the structure and constraints of this schema?",
     inputSchema: {
-      schema_code: z
-        .string()
-        .describe("Zod schema code (e.g., 'z.object({ name: z.string() })')"),
+      schema_code: z.string().describe("Zod schema code (e.g., 'z.object({ name: z.string() })')"),
     },
   },
   async ({ schema_code }) => {
@@ -294,7 +287,12 @@ server.registerTool(
       "Use to answer: what does a valid payload for this schema look like?",
     inputSchema: {
       schema_code: z.string().describe("Zod schema code"),
-      count: z.number().int().min(1).default(1).describe("Number of mocks to generate (default: 1)"),
+      count: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Number of mocks to generate (default: 1)"),
     },
   },
   async ({ schema_code, count }) => {
@@ -302,9 +300,7 @@ server.registerTool(
       const schema = parseZodSchema(schema_code);
       const mocks = Array.from({ length: count }, () => generateMock(schema));
       return {
-        content: [
-          { type: "text", text: JSON.stringify(count === 1 ? mocks[0] : mocks, null, 2) },
-        ],
+        content: [{ type: "text", text: JSON.stringify(count === 1 ? mocks[0] : mocks, null, 2) }],
       };
     } catch (err) {
       return errorResponse(err);
@@ -351,7 +347,10 @@ server.registerTool(
         .default("GET")
         .describe("HTTP method"),
       schema_code: z.string().describe("Zod schema code for the response body"),
-      test_name: z.string().default("API Contract Validation").describe("Name of the generated test"),
+      test_name: z
+        .string()
+        .default("API Contract Validation")
+        .describe("Name of the generated test"),
     },
   },
   async ({ framework, base_url, endpoint, method, schema_code, test_name }) => {
