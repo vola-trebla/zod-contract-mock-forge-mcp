@@ -1,4 +1,4 @@
-# zod-contract-mock-forge-mcp 🐸⚒️
+# zod-contract-mock-forge-mcp
 
 MCP server for deterministic mock generation and API contract scaffolding using Zod schemas.
 
