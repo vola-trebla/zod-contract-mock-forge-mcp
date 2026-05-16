@@ -1,5 +1,10 @@
 # zod-contract-mock-forge-mcp 🐸⚒️
 
+[![npm version](https://img.shields.io/npm/v/zod-contract-mock-forge-mcp.svg)](https://www.npmjs.com/package/zod-contract-mock-forge-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/zod-contract-mock-forge-mcp.svg)](https://www.npmjs.com/package/zod-contract-mock-forge-mcp)
+[![CI](https://github.com/vola-trebla/zod-contract-mock-forge-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/vola-trebla/zod-contract-mock-forge-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **zod-contract-mock-forge-mcp** is a powerful Model Context Protocol (MCP) server designed to bridge the gap between Zod schemas and automated testing. It empowers AI agents to perform deterministic mock generation, deep boundary testing, and API contract scaffolding with ease.
 
 ---
