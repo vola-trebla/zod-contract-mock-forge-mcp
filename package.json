@@ -60,5 +60,10 @@
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
+  },
+  "mcpName": "io.github.vola-trebla/zod-contract-mock-forge-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vola-trebla/zod-contract-mock-forge-mcp.git"
   }
 }
