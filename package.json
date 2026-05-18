@@ -1,6 +1,6 @@
 {
   "name": "zod-contract-mock-forge-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for deterministic mock generation and API contract scaffolding using Zod schemas",
   "main": "dist/index.js",
   "bin": {
