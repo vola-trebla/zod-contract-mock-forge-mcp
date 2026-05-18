@@ -1,23 +1,23 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { readFile } from "node:fs/promises";
-import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
-import { generateMock } from "@anatine/zod-mock";
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { readFile } from 'node:fs/promises';
+import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { generateMock } from '@anatine/zod-mock';
 
 export function parseZodSchema(schemaCode: string): z.ZodTypeAny {
   try {
     const cleanCode = schemaCode
-      .replace(/import\s+.*\s+from\s+['"]zod['"];?/g, "")
-      .replace(/const\s+\w+\s*=\s*/g, "")
+      .replace(/import\s+.*\s+from\s+['"]zod['"];?/g, '')
+      .replace(/const\s+\w+\s*=\s*/g, '')
       .trim();
 
-    const fn = new Function("z", `return ${cleanCode}`);
+    const fn = new Function('z', `return ${cleanCode}`);
     const schema = fn(z);
 
     if (!(schema instanceof z.ZodType)) {
-      throw new Error("The provided code did not return a valid Zod schema.");
+      throw new Error('The provided code did not return a valid Zod schema.');
     }
 
     return schema;
@@ -71,47 +71,47 @@ export function generateViolations(
       else if (target instanceof z.ZodDefault) target = target._def.innerType;
     }
 
-    const pathStr = path.length > 0 ? path.join(".") : "root";
+    const pathStr = path.length > 0 ? path.join('.') : 'root';
 
     if (target instanceof z.ZodString) {
-      addViolation(path, "TYPE_MISMATCH", 12345, `Field '${pathStr}' expected string, got number.`);
+      addViolation(path, 'TYPE_MISMATCH', 12345, `Field '${pathStr}' expected string, got number.`);
       for (const check of (target as z.ZodString)._def.checks) {
-        if (check.kind === "email")
+        if (check.kind === 'email')
           addViolation(
             path,
-            "INVALID_EMAIL",
-            "invalid-email",
+            'INVALID_EMAIL',
+            'invalid-email',
             `Field '${pathStr}' expected valid email.`
           );
-        if (check.kind === "url")
-          addViolation(path, "INVALID_URL", "not-a-url", `Field '${pathStr}' expected valid URL.`);
-        if (check.kind === "uuid")
+        if (check.kind === 'url')
+          addViolation(path, 'INVALID_URL', 'not-a-url', `Field '${pathStr}' expected valid URL.`);
+        if (check.kind === 'uuid')
           addViolation(
             path,
-            "INVALID_UUID",
-            "not-a-uuid",
+            'INVALID_UUID',
+            'not-a-uuid',
             `Field '${pathStr}' expected valid UUID.`
           );
       }
     } else if (target instanceof z.ZodNumber) {
       addViolation(
         path,
-        "TYPE_MISMATCH",
-        "not-a-number",
+        'TYPE_MISMATCH',
+        'not-a-number',
         `Field '${pathStr}' expected number, got string.`
       );
       for (const check of (target as z.ZodNumber)._def.checks) {
-        if (check.kind === "min")
+        if (check.kind === 'min')
           addViolation(
             path,
-            "MIN_VALUE_VIOLATION",
+            'MIN_VALUE_VIOLATION',
             (check as { value: number }).value - 1,
             `Field '${pathStr}' expected min ${(check as { value: number }).value}.`
           );
-        if (check.kind === "max")
+        if (check.kind === 'max')
           addViolation(
             path,
-            "MAX_VALUE_VIOLATION",
+            'MAX_VALUE_VIOLATION',
             (check as { value: number }).value + 1,
             `Field '${pathStr}' expected max ${(check as { value: number }).value}.`
           );
@@ -119,16 +119,16 @@ export function generateViolations(
     } else if (target instanceof z.ZodBoolean) {
       addViolation(
         path,
-        "TYPE_MISMATCH",
-        "not-a-boolean",
+        'TYPE_MISMATCH',
+        'not-a-boolean',
         `Field '${pathStr}' expected boolean, got string.`
       );
     } else if (target instanceof z.ZodEnum) {
       addViolation(
         path,
-        "INVALID_ENUM_VALUE",
-        "invalid_enum_val",
-        `Field '${pathStr}' expected one of: ${(target as z.ZodEnum<[string, ...string[]]>)._def.values.join(", ")}`
+        'INVALID_ENUM_VALUE',
+        'invalid_enum_val',
+        `Field '${pathStr}' expected one of: ${(target as z.ZodEnum<[string, ...string[]]>)._def.values.join(', ')}`
       );
     } else if (target instanceof z.ZodObject) {
       const shape = target.shape as Record<string, z.ZodTypeAny>;
@@ -147,9 +147,9 @@ export function generateViolations(
         if (!isFieldOptional) {
           addViolation(
             fieldPath,
-            "MISSING_REQUIRED_FIELD",
+            'MISSING_REQUIRED_FIELD',
             undefined,
-            `Field '${fieldPath.join(".")}' is required.`
+            `Field '${fieldPath.join('.')}' is required.`
           );
         }
         walk(fieldSchema, fieldPath);
@@ -161,14 +161,14 @@ export function generateViolations(
         baseMock
       );
       if (Array.isArray(currentData) && currentData.length > 0) {
-        walk(elementSchema, [...path, "0"]);
+        walk(elementSchema, [...path, '0']);
       }
 
       const checks = (target as z.ZodArray<z.ZodTypeAny>)._def.minLength;
       if (checks) {
         addViolation(
           path,
-          "MIN_LENGTH_VIOLATION",
+          'MIN_LENGTH_VIOLATION',
           [],
           `Field '${pathStr}' expected min length ${checks.value}.`
         );
@@ -181,15 +181,15 @@ export function generateViolations(
 }
 
 const server = new McpServer({
-  name: "zod-contract-mock-forge-mcp",
-  version: "0.1.0",
+  name: 'zod-contract-mock-forge-mcp',
+  version: '0.1.0',
 });
 
 function errorResponse(err: unknown) {
   return {
     content: [
       {
-        type: "text" as const,
+        type: 'text' as const,
         text: `Error: ${err instanceof Error ? err.message : String(err)}`,
       },
     ],
@@ -198,11 +198,11 @@ function errorResponse(err: unknown) {
 }
 
 server.registerTool(
-  "introspect_schema",
+  'introspect_schema',
   {
     description:
-      "Convert a Zod schema string to JSON Schema for LLM understanding. " +
-      "Use to answer: what is the structure and constraints of this schema?",
+      'Convert a Zod schema string to JSON Schema for LLM understanding. ' +
+      'Use to answer: what is the structure and constraints of this schema?',
     inputSchema: {
       schema_code: z.string().describe("Zod schema code (e.g., 'z.object({ name: z.string() })')"),
     },
@@ -211,7 +211,7 @@ server.registerTool(
     try {
       const schema = parseZodSchema(schema_code);
       const jsonSchema = zodToJsonSchema(schema);
-      return { content: [{ type: "text", text: JSON.stringify(jsonSchema, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(jsonSchema, null, 2) }] };
     } catch (err) {
       return errorResponse(err);
     }
@@ -219,33 +219,33 @@ server.registerTool(
 );
 
 server.registerTool(
-  "read_schema_from_file",
+  'read_schema_from_file',
   {
     description:
-      "Read a Zod schema directly from a TypeScript or JavaScript file. " +
-      "Use to answer: what schema is defined in this file?",
+      'Read a Zod schema directly from a TypeScript or JavaScript file. ' +
+      'Use to answer: what schema is defined in this file?',
     inputSchema: {
       file_path: z
         .string()
-        .describe("Absolute path to the .ts or .js file containing the Zod schema"),
+        .describe('Absolute path to the .ts or .js file containing the Zod schema'),
       export_name: z
         .string()
         .optional()
         .describe(
-          "Name of the exported schema variable. If omitted, extracts the first Zod expression found."
+          'Name of the exported schema variable. If omitted, extracts the first Zod expression found.'
         ),
     },
   },
   async ({ file_path, export_name }) => {
     try {
-      const content = await readFile(file_path, "utf-8");
+      const content = await readFile(file_path, 'utf-8');
 
-      let schemaCode = "";
+      let schemaCode = '';
 
       if (export_name) {
         const regex = new RegExp(
           `(?:export\\s+)?(?:const|let|var)\\s+${export_name}\\s*=\\s*([\\s\\S]*?)(?:;|$)`,
-          "m"
+          'm'
         );
         const match = content.match(regex);
         if (match) {
@@ -262,7 +262,7 @@ server.registerTool(
           return {
             content: [
               {
-                type: "text",
+                type: 'text',
                 text: `Could not automatically extract Zod schema from ${file_path}. Raw content:\n\n${content}`,
               },
             ],
@@ -271,7 +271,7 @@ server.registerTool(
       }
 
       return {
-        content: [{ type: "text", text: `Extracted schema from ${file_path}:\n\n${schemaCode}` }],
+        content: [{ type: 'text', text: `Extracted schema from ${file_path}:\n\n${schemaCode}` }],
       };
     } catch (err) {
       return errorResponse(err);
@@ -280,19 +280,19 @@ server.registerTool(
 );
 
 server.registerTool(
-  "generate_valid_mock",
+  'generate_valid_mock',
   {
     description:
-      "Generate valid mock data from a Zod schema string. " +
-      "Use to answer: what does a valid payload for this schema look like?",
+      'Generate valid mock data from a Zod schema string. ' +
+      'Use to answer: what does a valid payload for this schema look like?',
     inputSchema: {
-      schema_code: z.string().describe("Zod schema code"),
+      schema_code: z.string().describe('Zod schema code'),
       count: z
         .number()
         .int()
         .min(1)
         .default(1)
-        .describe("Number of mocks to generate (default: 1)"),
+        .describe('Number of mocks to generate (default: 1)'),
     },
   },
   async ({ schema_code, count }) => {
@@ -300,7 +300,7 @@ server.registerTool(
       const schema = parseZodSchema(schema_code);
       const mocks = Array.from({ length: count }, () => generateMock(schema));
       return {
-        content: [{ type: "text", text: JSON.stringify(count === 1 ? mocks[0] : mocks, null, 2) }],
+        content: [{ type: 'text', text: JSON.stringify(count === 1 ? mocks[0] : mocks, null, 2) }],
       };
     } catch (err) {
       return errorResponse(err);
@@ -309,20 +309,20 @@ server.registerTool(
 );
 
 server.registerTool(
-  "generate_boundary_violations",
+  'generate_boundary_violations',
   {
     description:
-      "Generate intentionally invalid payloads based on a Zod schema — for negative testing. " +
-      "Use to answer: what invalid inputs should I test against this API?",
+      'Generate intentionally invalid payloads based on a Zod schema — for negative testing. ' +
+      'Use to answer: what invalid inputs should I test against this API?',
     inputSchema: {
-      schema_code: z.string().describe("Zod schema code"),
+      schema_code: z.string().describe('Zod schema code'),
     },
   },
   async ({ schema_code }) => {
     try {
       const schema = parseZodSchema(schema_code);
       const violations = generateViolations(schema);
-      return { content: [{ type: "text", text: JSON.stringify(violations, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(violations, null, 2) }] };
     } catch (err) {
       return errorResponse(err);
     }
@@ -330,35 +330,35 @@ server.registerTool(
 );
 
 server.registerTool(
-  "scaffold_api_contract_test",
+  'scaffold_api_contract_test',
   {
     description:
-      "Generate an API contract test or mock boilerplate for Playwright, Jest, Vitest, or MSW. " +
-      "Use to answer: how do I write a test that validates this API endpoint against this schema?",
+      'Generate an API contract test or mock boilerplate for Playwright, Jest, Vitest, or MSW. ' +
+      'Use to answer: how do I write a test that validates this API endpoint against this schema?',
     inputSchema: {
       framework: z
-        .enum(["playwright", "jest", "vitest", "msw"])
-        .default("playwright")
-        .describe("Testing framework to generate code for"),
-      base_url: z.string().default("http://localhost:3000").describe("Base URL of the API"),
-      endpoint: z.string().describe("API endpoint path (e.g., /api/users)"),
+        .enum(['playwright', 'jest', 'vitest', 'msw'])
+        .default('playwright')
+        .describe('Testing framework to generate code for'),
+      base_url: z.string().default('http://localhost:3000').describe('Base URL of the API'),
+      endpoint: z.string().describe('API endpoint path (e.g., /api/users)'),
       method: z
-        .enum(["GET", "POST", "PUT", "DELETE", "PATCH"])
-        .default("GET")
-        .describe("HTTP method"),
-      schema_code: z.string().describe("Zod schema code for the response body"),
+        .enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+        .default('GET')
+        .describe('HTTP method'),
+      schema_code: z.string().describe('Zod schema code for the response body'),
       test_name: z
         .string()
-        .default("API Contract Validation")
-        .describe("Name of the generated test"),
+        .default('API Contract Validation')
+        .describe('Name of the generated test'),
     },
   },
   async ({ framework, base_url, endpoint, method, schema_code, test_name }) => {
     try {
-      let testCode = "";
+      let testCode = '';
       const url = `${base_url}${endpoint}`;
 
-      if (framework === "playwright") {
+      if (framework === 'playwright') {
         testCode = `import { test, expect } from '@playwright/test';
 import { z } from 'zod';
 
@@ -374,8 +374,8 @@ test('${test_name}', async ({ request }) => {
   }
   expect(result.success).toBe(true);
 });`;
-      } else if (framework === "jest" || framework === "vitest") {
-        const imp = framework === "vitest" ? `import { test, expect } from 'vitest';\n` : "";
+      } else if (framework === 'jest' || framework === 'vitest') {
+        const imp = framework === 'vitest' ? `import { test, expect } from 'vitest';\n` : '';
         testCode = `${imp}import { z } from 'zod';
 import axios from 'axios';
 
@@ -389,7 +389,7 @@ test('${test_name}', async () => {
   }
   expect(result.success).toBe(true);
 });`;
-      } else if (framework === "msw") {
+      } else if (framework === 'msw') {
         testCode = `import { http, HttpResponse } from 'msw';
 import { z } from 'zod';
 
@@ -403,7 +403,7 @@ export const handlers = [
 ];`;
       }
 
-      return { content: [{ type: "text", text: testCode }] };
+      return { content: [{ type: 'text', text: testCode }] };
     } catch (err) {
       return errorResponse(err);
     }
@@ -411,14 +411,14 @@ export const handlers = [
 );
 
 server.registerTool(
-  "suggest_contract_fix",
+  'suggest_contract_fix',
   {
     description:
-      "Validate a JSON payload against a Zod schema and suggest fixes for each violation. " +
-      "Use to answer: why does this payload fail validation, and how do I fix it?",
+      'Validate a JSON payload against a Zod schema and suggest fixes for each violation. ' +
+      'Use to answer: why does this payload fail validation, and how do I fix it?',
     inputSchema: {
-      schema_code: z.string().describe("Zod schema code"),
-      payload: z.string().describe("JSON string of the failing payload"),
+      schema_code: z.string().describe('Zod schema code'),
+      payload: z.string().describe('JSON string of the failing payload'),
     },
   },
   async ({ schema_code, payload }) => {
@@ -428,38 +428,38 @@ server.registerTool(
       try {
         payloadObj = JSON.parse(payload);
       } catch {
-        throw new Error("payload must be valid JSON");
+        throw new Error('payload must be valid JSON');
       }
 
       const result = schema.safeParse(payloadObj);
       if (result.success) {
         return {
           content: [
-            { type: "text", text: "The payload is valid against the schema. No fixes needed." },
+            { type: 'text', text: 'The payload is valid against the schema. No fixes needed.' },
           ],
         };
       }
 
-      const lines: string[] = ["Contract Violation Detected.", ""];
+      const lines: string[] = ['Contract Violation Detected.', ''];
       result.error.issues.forEach((issue, index) => {
-        const path = issue.path.length > 0 ? issue.path.join(".") : "root";
+        const path = issue.path.length > 0 ? issue.path.join('.') : 'root';
         lines.push(`Issue ${index + 1}: At '${path}', ${issue.message}`);
         lines.push(`  -> To fix data: Provide a valid value for '${path}'.`);
 
         let schemaFix = `Make '${path}' optional(), nullable(), or change its type.`;
-        if (issue.code === "invalid_type" && issue.received === "undefined") {
+        if (issue.code === 'invalid_type' && issue.received === 'undefined') {
           schemaFix = `Make '${path}' optional: z...optional()`;
-        } else if (issue.code === "invalid_type" && issue.received === "null") {
+        } else if (issue.code === 'invalid_type' && issue.received === 'null') {
           schemaFix = `Make '${path}' nullable: z...nullable()`;
-        } else if (issue.code === "invalid_type") {
+        } else if (issue.code === 'invalid_type') {
           schemaFix = `Change the type of '${path}' to match received type (${issue.received}).`;
         }
 
         lines.push(`  -> To fix schema: ${schemaFix}`);
-        lines.push("");
+        lines.push('');
       });
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (err) {
       return errorResponse(err);
     }
