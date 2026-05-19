@@ -180,6 +180,174 @@ export function generateViolations(
   return violations;
 }
 
+interface VariantPayload {
+  violation_type:
+    | 'missing_discriminator'
+    | 'wrong_discriminator_value'
+    | 'required_field_type_mismatch'
+    | 'missing_required_field';
+  payload: unknown;
+  description: string;
+}
+
+interface UnionVariantViolations {
+  variant_index: number;
+  variant_description: string;
+  payloads: VariantPayload[];
+}
+
+interface ExhaustiveUnionViolationsResult {
+  union_type: 'discriminated' | 'plain';
+  discriminator_key?: string;
+  total_variants: number;
+  violations: UnionVariantViolations[];
+}
+
+function requiredFieldsOf(shape: Record<string, z.ZodTypeAny>): string[] {
+  return Object.keys(shape).filter((k) => {
+    let t: z.ZodTypeAny = shape[k];
+    while (t instanceof z.ZodDefault) t = t._def.innerType;
+    return !(t instanceof z.ZodOptional);
+  });
+}
+
+function wrongTypeFor(fieldSchema: z.ZodTypeAny): unknown {
+  let t = fieldSchema;
+  while (t instanceof z.ZodOptional || t instanceof z.ZodDefault || t instanceof z.ZodNullable) {
+    if (t instanceof z.ZodOptional) t = t.unwrap();
+    else if (t instanceof z.ZodNullable) t = t.unwrap();
+    else t = t._def.innerType;
+  }
+  return t instanceof z.ZodNumber ? 'not-a-number' : 99999;
+}
+
+export function generateExhaustiveUnionViolations(
+  schema: z.ZodTypeAny
+): ExhaustiveUnionViolationsResult {
+  let inner = schema;
+  while (inner instanceof z.ZodOptional || inner instanceof z.ZodNullable) {
+    inner = inner.unwrap();
+  }
+
+  if (inner instanceof z.ZodDiscriminatedUnion) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const def = (inner as any)._def as {
+      discriminator: string;
+      optionsMap: Map<string, z.ZodObject<z.ZodRawShape>>;
+    };
+    const discriminator = def.discriminator;
+    const optionsMap = def.optionsMap;
+    const allKeys = Array.from(optionsMap.keys());
+    const violations: UnionVariantViolations[] = [];
+    let variantIndex = 0;
+
+    for (const [discKey, variantSchema] of optionsMap.entries()) {
+      const baseMock = generateMock(variantSchema) as Record<string, unknown>;
+      const payloads: VariantPayload[] = [];
+
+      const missingDisc = structuredClone(baseMock);
+      delete missingDisc[discriminator];
+      payloads.push({
+        violation_type: 'missing_discriminator',
+        payload: missingDisc,
+        description: `Missing discriminator key '${discriminator}' for variant '${discKey}'.`,
+      });
+
+      const wrongDisc = structuredClone(baseMock);
+      wrongDisc[discriminator] = '__invalid__';
+      payloads.push({
+        violation_type: 'wrong_discriminator_value',
+        payload: wrongDisc,
+        description: `Discriminator '${discriminator}' set to unknown value (valid: ${allKeys.join(', ')}).`,
+      });
+
+      const shape = variantSchema.shape;
+      const required = requiredFieldsOf(shape).filter((k) => k !== discriminator);
+      if (required.length > 0) {
+        const field = required[0];
+        const wrongTyped = structuredClone(baseMock);
+        wrongTyped[field] = wrongTypeFor(shape[field]);
+        payloads.push({
+          violation_type: 'required_field_type_mismatch',
+          payload: wrongTyped,
+          description: `Field '${field}' in variant '${discKey}' has wrong type.`,
+        });
+      }
+
+      violations.push({
+        variant_index: variantIndex++,
+        variant_description: `${discriminator} = "${discKey}"`,
+        payloads,
+      });
+    }
+
+    return {
+      union_type: 'discriminated',
+      discriminator_key: discriminator,
+      total_variants: optionsMap.size,
+      violations,
+    };
+  }
+
+  if (inner instanceof z.ZodUnion) {
+    const options = (inner as z.ZodUnion<[z.ZodTypeAny, ...z.ZodTypeAny[]]>)._def.options;
+    const violations: UnionVariantViolations[] = [];
+
+    for (let i = 0; i < options.length; i++) {
+      const variantSchema = options[i];
+      let unwrapped = variantSchema;
+      while (unwrapped instanceof z.ZodOptional || unwrapped instanceof z.ZodNullable) {
+        unwrapped = unwrapped.unwrap();
+      }
+      const payloads: VariantPayload[] = [];
+
+      if (unwrapped instanceof z.ZodObject) {
+        const shape = unwrapped.shape as Record<string, z.ZodTypeAny>;
+        const baseMock = generateMock(variantSchema) as Record<string, unknown>;
+        const required = requiredFieldsOf(shape);
+
+        if (required.length > 0) {
+          const field = required[0];
+          const missingPayload = structuredClone(baseMock);
+          delete missingPayload[field];
+          payloads.push({
+            violation_type: 'missing_required_field',
+            payload: missingPayload,
+            description: `Variant ${i}: field '${field}' is required but missing.`,
+          });
+
+          const wrongTyped = structuredClone(baseMock);
+          wrongTyped[field] = wrongTypeFor(shape[field]);
+          payloads.push({
+            violation_type: 'required_field_type_mismatch',
+            payload: wrongTyped,
+            description: `Variant ${i}: field '${field}' has wrong type.`,
+          });
+        }
+      } else {
+        const wrongValue = unwrapped instanceof z.ZodNumber ? 'not-a-number' : 99999;
+        payloads.push({
+          violation_type: 'required_field_type_mismatch',
+          payload: wrongValue,
+          description: `Variant ${i}: wrong primitive type provided.`,
+        });
+      }
+
+      violations.push({
+        variant_index: i,
+        variant_description: `union variant ${i}`,
+        payloads,
+      });
+    }
+
+    return { union_type: 'plain', total_variants: options.length, violations };
+  }
+
+  throw new Error(
+    'Schema must be z.union() or z.discriminatedUnion() — use generate_boundary_violations for other types.'
+  );
+}
+
 const server = new McpServer({
   name: 'zod-contract-mock-forge-mcp',
   version: '0.1.0',
@@ -323,6 +491,29 @@ server.registerTool(
       const schema = parseZodSchema(schema_code);
       const violations = generateViolations(schema);
       return { content: [{ type: 'text', text: JSON.stringify(violations, null, 2) }] };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  }
+);
+
+server.registerTool(
+  'generate_exhaustive_union_violations',
+  {
+    description:
+      'Generate violation payloads for every branch of a z.union() or z.discriminatedUnion() schema. ' +
+      'Use when generate_boundary_violations only covers one union variant and you need full branch coverage.',
+    inputSchema: {
+      schema_code: z
+        .string()
+        .describe('Zod schema code — must evaluate to a z.union() or z.discriminatedUnion()'),
+    },
+  },
+  async ({ schema_code }) => {
+    try {
+      const schema = parseZodSchema(schema_code);
+      const result = generateExhaustiveUnionViolations(schema);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return errorResponse(err);
     }
