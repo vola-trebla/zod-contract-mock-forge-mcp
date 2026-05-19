@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { parseZodSchema, generateViolations, generateExhaustiveUnionViolations } from './index.js';
+import {
+  parseZodSchema,
+  generateViolations,
+  generateExhaustiveUnionViolations,
+  generateMockVariants,
+} from './index.js';
 
 describe('Forge Core Logic', () => {
   describe('parseZodSchema', () => {
@@ -137,6 +142,47 @@ describe('Forge Core Logic', () => {
     it('throws for non-union schemas', () => {
       const schema = z.object({ name: z.string() });
       expect(() => generateExhaustiveUnionViolations(schema)).toThrow();
+    });
+  });
+
+  describe('generateMockVariants', () => {
+    const schema = z.object({ name: z.string(), age: z.number().min(0).max(120) });
+    const code = 'z.object({ name: z.string(), age: z.number().min(0).max(120) })';
+
+    it('returns the requested count of variants', () => {
+      const result = generateMockVariants(schema, code, 5);
+      expect(result.count).toBe(5);
+      expect(result.variants).toHaveLength(5);
+    });
+
+    it('all variants pass schema validation', () => {
+      const result = generateMockVariants(schema, code, 10);
+      expect(result.all_valid).toBe(true);
+    });
+
+    it('produces a stable schema_id from schema code', () => {
+      const r1 = generateMockVariants(schema, code, 1);
+      const r2 = generateMockVariants(schema, code, 3);
+      expect(r1.schema_id).toBe(r2.schema_id);
+      expect(r1.schema_id).toMatch(/^schema_[0-9a-f]{8}$/);
+    });
+
+    it('returns deterministic output for the same seed', () => {
+      const r1 = generateMockVariants(schema, code, 5, 42);
+      const r2 = generateMockVariants(schema, code, 5, 42);
+      expect(r1.variants).toEqual(r2.variants);
+    });
+
+    it('returns different output for different seeds', () => {
+      const r1 = generateMockVariants(schema, code, 5, 1);
+      const r2 = generateMockVariants(schema, code, 5, 2);
+      expect(r1.variants).not.toEqual(r2.variants);
+    });
+
+    it('works without a seed', () => {
+      const result = generateMockVariants(schema, code, 3);
+      expect(result.variants).toHaveLength(3);
+      expect(result.all_valid).toBe(true);
     });
   });
 });

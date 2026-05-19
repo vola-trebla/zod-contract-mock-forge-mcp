@@ -348,6 +348,34 @@ export function generateExhaustiveUnionViolations(
   );
 }
 
+interface MockVariantsResult {
+  schema_id: string;
+  count: number;
+  variants: unknown[];
+  all_valid: boolean;
+}
+
+function deriveSchemaId(code: string): string {
+  let h = 0;
+  for (let i = 0; i < code.length; i++) {
+    h = (Math.imul(31, h) + code.charCodeAt(i)) | 0;
+  }
+  return `schema_${(h >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+export function generateMockVariants(
+  schema: z.ZodTypeAny,
+  schemaCode: string,
+  count: number,
+  seed?: number
+): MockVariantsResult {
+  const variants = Array.from({ length: count }, (_, i) =>
+    generateMock(schema, seed !== undefined ? { seed: seed + i } : undefined)
+  );
+  const all_valid = variants.every((v) => schema.safeParse(v).success);
+  return { schema_id: deriveSchemaId(schemaCode), count: variants.length, variants, all_valid };
+}
+
 const server = new McpServer({
   name: 'zod-contract-mock-forge-mcp',
   version: '0.1.0',
@@ -513,6 +541,40 @@ server.registerTool(
     try {
       const schema = parseZodSchema(schema_code);
       const result = generateExhaustiveUnionViolations(schema);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  }
+);
+
+server.registerTool(
+  'generate_mock_variants',
+  {
+    description:
+      'Generate N structurally valid but value-diverse mocks from a Zod schema — for property-based testing. ' +
+      'Use when generate_valid_mock is too deterministic and you need varied inputs to surface edge cases. ' +
+      'Supply seed for reproducible output in CI.',
+    inputSchema: {
+      schema_code: z.string().describe('Zod schema code'),
+      count: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(5)
+        .describe('Number of mock variants to generate (default: 5, max: 50)'),
+      seed: z
+        .number()
+        .int()
+        .optional()
+        .describe('Seed for reproducible output — omit for random variants each call'),
+    },
+  },
+  async ({ schema_code, count, seed }) => {
+    try {
+      const schema = parseZodSchema(schema_code);
+      const result = generateMockVariants(schema, schema_code, count, seed);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return errorResponse(err);
