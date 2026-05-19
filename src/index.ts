@@ -621,7 +621,7 @@ export async function evaluateSchemaEvolutionFromFile(
 
 const server = new McpServer({
   name: 'zod-contract-mock-forge-mcp',
-  version: '0.1.0',
+  version: '0.2.0',
 });
 
 function errorResponse(err: unknown) {
