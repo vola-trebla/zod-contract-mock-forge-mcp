@@ -1,10 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { z } from 'zod';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   parseZodSchema,
   generateViolations,
   generateExhaustiveUnionViolations,
   generateMockVariants,
+  detectSchemaDrift,
 } from './index.js';
 
 describe('Forge Core Logic', () => {
@@ -183,6 +187,127 @@ describe('Forge Core Logic', () => {
       const result = generateMockVariants(schema, code, 3);
       expect(result.variants).toHaveLength(3);
       expect(result.all_valid).toBe(true);
+    });
+  });
+
+  describe('detectSchemaDrift', () => {
+    let testDir: string;
+    let zodFile: string;
+    let openApiFile: string;
+    let driftedOpenApiFile: string;
+
+    beforeAll(() => {
+      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'drift-test-'));
+
+      zodFile = path.join(testDir, 'schemas.ts');
+      fs.writeFileSync(
+        zodFile,
+        [
+          'export const UserSchema = z.object({',
+          '  name: z.string(),',
+          '  age: z.number(),',
+          '  email: z.string().email(),',
+          '});',
+        ].join('\n')
+      );
+
+      // OpenAPI spec in sync with Zod
+      openApiFile = path.join(testDir, 'openapi.yaml');
+      fs.writeFileSync(
+        openApiFile,
+        [
+          'openapi: "3.0.0"',
+          'components:',
+          '  schemas:',
+          '    UserSchema:',
+          '      type: object',
+          '      required: [name, age, email]',
+          '      properties:',
+          '        name:',
+          '          type: string',
+          '        age:',
+          '          type: number',
+          '        email:',
+          '          type: string',
+        ].join('\n')
+      );
+
+      // OpenAPI spec with drift: missing email, extra role, age as string
+      driftedOpenApiFile = path.join(testDir, 'openapi-drifted.yaml');
+      fs.writeFileSync(
+        driftedOpenApiFile,
+        [
+          'openapi: "3.0.0"',
+          'components:',
+          '  schemas:',
+          '    UserSchema:',
+          '      type: object',
+          '      required: [name, role]',
+          '      properties:',
+          '        name:',
+          '          type: string',
+          '        age:',
+          '          type: string',
+          '        role:',
+          '          type: string',
+        ].join('\n')
+      );
+    });
+
+    afterAll(() => {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    });
+
+    it('returns zero drifts when schemas are in sync', async () => {
+      const result = await detectSchemaDrift(zodFile, openApiFile, 'UserSchema');
+      expect(result.drift_count).toBe(0);
+      expect(result.drifts).toHaveLength(0);
+    });
+
+    it('detects field missing in OpenAPI (email)', async () => {
+      const result = await detectSchemaDrift(zodFile, driftedOpenApiFile, 'UserSchema');
+      const missing = result.drifts.find(
+        (d) => d.drift_type === 'missing_in_openapi' && d.field_path === 'email'
+      );
+      expect(missing).toBeDefined();
+    });
+
+    it('detects field missing in Zod (role)', async () => {
+      const result = await detectSchemaDrift(zodFile, driftedOpenApiFile, 'UserSchema');
+      const extra = result.drifts.find(
+        (d) => d.drift_type === 'missing_in_zod' && d.field_path === 'role'
+      );
+      expect(extra).toBeDefined();
+    });
+
+    it('detects type conflict (age: number vs string)', async () => {
+      const result = await detectSchemaDrift(zodFile, driftedOpenApiFile, 'UserSchema');
+      const conflict = result.drifts.find(
+        (d) => d.drift_type === 'type_conflict' && d.field_path === 'age'
+      );
+      expect(conflict).toBeDefined();
+      expect(conflict!.zod_value).toBe('number');
+      expect(conflict!.openapi_value).toBe('string');
+    });
+
+    it('detects required mismatch', async () => {
+      const result = await detectSchemaDrift(zodFile, driftedOpenApiFile, 'UserSchema');
+      const mismatch = result.drifts.find(
+        (d) => d.drift_type === 'required_mismatch' && d.field_path === 'age'
+      );
+      expect(mismatch).toBeDefined();
+    });
+
+    it('throws when schema name not found in OpenAPI', async () => {
+      await expect(
+        detectSchemaDrift(zodFile, openApiFile, 'UserSchema', 'NonExistentSchema')
+      ).rejects.toThrow('NonExistentSchema');
+    });
+
+    it('includes schema names in result', async () => {
+      const result = await detectSchemaDrift(zodFile, openApiFile, 'UserSchema');
+      expect(result.zod_schema_name).toBe('UserSchema');
+      expect(result.openapi_schema_name).toBe('UserSchema');
     });
   });
 });
