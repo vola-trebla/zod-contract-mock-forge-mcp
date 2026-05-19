@@ -3,12 +3,15 @@ import { z } from 'zod';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execSync } from 'node:child_process';
 import {
   parseZodSchema,
   generateViolations,
   generateExhaustiveUnionViolations,
   generateMockVariants,
   detectSchemaDrift,
+  evaluateSchemaEvolution,
+  evaluateSchemaEvolutionFromFile,
 } from './index.js';
 
 describe('Forge Core Logic', () => {
@@ -308,6 +311,104 @@ describe('Forge Core Logic', () => {
       const result = await detectSchemaDrift(zodFile, openApiFile, 'UserSchema');
       expect(result.zod_schema_name).toBe('UserSchema');
       expect(result.openapi_schema_name).toBe('UserSchema');
+    });
+  });
+
+  describe('evaluateSchemaEvolution', () => {
+    const oldCode = 'z.object({ name: z.string(), age: z.number() })';
+
+    it('returns no breaking change when schemas are identical', () => {
+      const result = evaluateSchemaEvolution(oldCode, oldCode);
+      expect(result.breaking_change).toBe(false);
+      expect(result.invalid_mock_count).toBe(0);
+      expect(result.failure_reasons).toHaveLength(0);
+    });
+
+    it('detects breaking change when required field is added', () => {
+      const newCode = 'z.object({ name: z.string(), age: z.number(), role: z.string() })';
+      const result = evaluateSchemaEvolution(oldCode, newCode);
+      expect(result.breaking_change).toBe(true);
+      expect(result.invalid_mock_count).toBeGreaterThan(0);
+      const roleFailure = result.failure_reasons.find((r) => r.field_path === 'role');
+      expect(roleFailure).toBeDefined();
+    });
+
+    it('detects breaking change when type is narrowed', () => {
+      const newCode = "z.object({ name: z.string(), age: z.enum(['18', '21', '65']) })";
+      const result = evaluateSchemaEvolution(oldCode, newCode);
+      expect(result.breaking_change).toBe(true);
+      const ageFailure = result.failure_reasons.find((r) => r.field_path === 'age');
+      expect(ageFailure).toBeDefined();
+    });
+
+    it('includes sample_count in result', () => {
+      const result = evaluateSchemaEvolution(oldCode, oldCode, 5);
+      expect(result.sample_count).toBe(5);
+    });
+
+    it('sorts failure_reasons by affected_mock_count descending', () => {
+      const newCode =
+        'z.object({ name: z.string(), age: z.number(), role: z.string(), team: z.string() })';
+      const result = evaluateSchemaEvolution(oldCode, newCode);
+      const counts = result.failure_reasons.map((r) => r.affected_mock_count);
+      expect(counts).toEqual([...counts].sort((a, b) => b - a));
+    });
+  });
+
+  describe('evaluateSchemaEvolutionFromFile (git integration)', () => {
+    let testDir: string;
+    let schemaFile: string;
+
+    const oldContent = [
+      'export const ProductSchema = z.object({',
+      '  name: z.string(),',
+      '  price: z.number(),',
+      '});',
+    ].join('\n');
+
+    const breakingContent = [
+      'export const ProductSchema = z.object({',
+      '  name: z.string(),',
+      '  price: z.number(),',
+      '  sku: z.string(),',
+      '});',
+    ].join('\n');
+
+    beforeAll(() => {
+      testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'evolution-test-'));
+      schemaFile = path.join(testDir, 'schemas.ts');
+
+      execSync('git init -b main', { cwd: testDir });
+      execSync('git config user.email "test@test.com"', { cwd: testDir });
+      execSync('git config user.name "Test"', { cwd: testDir });
+      fs.writeFileSync(schemaFile, oldContent);
+      execSync('git add .', { cwd: testDir });
+      execSync('git commit -m "init"', { cwd: testDir });
+    });
+
+    afterAll(() => {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    });
+
+    it('detects no breaking change when file matches HEAD', async () => {
+      const result = await evaluateSchemaEvolutionFromFile(schemaFile, 'ProductSchema');
+      expect(result.breaking_change).toBe(false);
+    });
+
+    it('detects breaking change when new required field added vs HEAD', async () => {
+      fs.writeFileSync(schemaFile, breakingContent);
+      try {
+        const result = await evaluateSchemaEvolutionFromFile(schemaFile, 'ProductSchema');
+        expect(result.breaking_change).toBe(true);
+        expect(result.failure_reasons.some((r) => r.field_path === 'sku')).toBe(true);
+      } finally {
+        fs.writeFileSync(schemaFile, oldContent);
+      }
+    });
+
+    it('uses old_schema_content when provided (no git needed)', async () => {
+      const result = await evaluateSchemaEvolutionFromFile(schemaFile, 'ProductSchema', oldContent);
+      expect(result.breaking_change).toBe(false);
     });
   });
 });
