@@ -6,6 +6,9 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { generateMock } from '@anatine/zod-mock';
 import * as yaml from 'js-yaml';
+import { execSync } from 'node:child_process';
+import * as path from 'node:path';
+import { realpathSync } from 'node:fs';
 
 export function parseZodSchema(schemaCode: string): z.ZodTypeAny {
   try {
@@ -528,6 +531,94 @@ export async function detectSchemaDrift(
   };
 }
 
+export interface FailureReason {
+  field_path: string;
+  zod_code: string;
+  expected: string;
+  received: string;
+  message: string;
+  affected_mock_count: number;
+}
+
+export interface EvaluateSchemaEvolutionResult {
+  breaking_change: boolean;
+  sample_count: number;
+  invalid_mock_count: number;
+  failure_reasons: FailureReason[];
+}
+
+export function evaluateSchemaEvolution(
+  oldSchemaCode: string,
+  newSchemaCode: string,
+  sampleCount = 20
+): EvaluateSchemaEvolutionResult {
+  const oldSchema = parseZodSchema(oldSchemaCode);
+  const newSchema = parseZodSchema(newSchemaCode);
+
+  const mocks = Array.from({ length: sampleCount }, (_, i) => generateMock(oldSchema, { seed: i }));
+
+  const failureMap = new Map<string, FailureReason>();
+  let invalidCount = 0;
+
+  for (const mock of mocks) {
+    const result = newSchema.safeParse(mock);
+    if (!result.success) {
+      invalidCount++;
+      for (const issue of result.error.issues) {
+        const fieldPath = issue.path.length > 0 ? issue.path.join('.') : 'root';
+        const key = `${fieldPath}:${issue.code}`;
+        const existing = failureMap.get(key);
+        if (existing) {
+          existing.affected_mock_count++;
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const anyIssue = issue as any;
+          failureMap.set(key, {
+            field_path: fieldPath,
+            zod_code: issue.code,
+            expected: anyIssue.expected ?? issue.code,
+            received: anyIssue.received ?? 'invalid',
+            message: issue.message,
+            affected_mock_count: 1,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    breaking_change: invalidCount > 0,
+    sample_count: sampleCount,
+    invalid_mock_count: invalidCount,
+    failure_reasons: Array.from(failureMap.values()).sort(
+      (a, b) => b.affected_mock_count - a.affected_mock_count
+    ),
+  };
+}
+
+export async function evaluateSchemaEvolutionFromFile(
+  schemaFilePath: string,
+  schemaExportName: string,
+  oldSchemaContent?: string
+): Promise<EvaluateSchemaEvolutionResult> {
+  const newFileContent = await readFile(schemaFilePath, 'utf-8');
+  const newSchemaCode = extractZodCodeFromFile(newFileContent, schemaExportName);
+
+  let oldSchemaCode: string;
+  if (oldSchemaContent !== undefined) {
+    oldSchemaCode = extractZodCodeFromFile(oldSchemaContent, schemaExportName);
+  } else {
+    const dir = path.dirname(schemaFilePath);
+    const repoRoot = execSync('git rev-parse --show-toplevel', { cwd: dir }).toString().trim();
+    // Resolve symlinks (/var → /private/var on macOS) before computing relative path
+    const relPath = path.relative(realpathSync(repoRoot), realpathSync(schemaFilePath));
+    const headContent = execSync(`git show HEAD:${relPath}`, { cwd: repoRoot }).toString();
+    oldSchemaCode = extractZodCodeFromFile(headContent, schemaExportName);
+  }
+
+  return evaluateSchemaEvolution(oldSchemaCode, newSchemaCode);
+}
+
 const server = new McpServer({
   name: 'zod-contract-mock-forge-mcp',
   version: '0.1.0',
@@ -903,6 +994,42 @@ server.registerTool(
         openapi_file_path,
         schema_export_name,
         openapi_schema_name
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  }
+);
+
+server.registerTool(
+  'evaluate_schema_evolution',
+  {
+    description:
+      'Detect breaking changes when a Zod schema is tightened — before tests run. ' +
+      'Generates mocks from the old schema, validates them against the new schema, ' +
+      'and reports exactly which fields and constraints now reject previously valid data. ' +
+      'Use when you changed a schema and want to know if existing test fixtures will break.',
+    inputSchema: {
+      schema_file_path: z
+        .string()
+        .describe('Absolute path to the TypeScript file containing the updated Zod schema'),
+      schema_export_name: z.string().describe('Name of the exported Zod schema variable'),
+      old_schema_content: z
+        .string()
+        .optional()
+        .describe(
+          'Full content of the old schema file. ' +
+            'Omit to automatically retrieve the last committed version via git show HEAD.'
+        ),
+    },
+  },
+  async ({ schema_file_path, schema_export_name, old_schema_content }) => {
+    try {
+      const result = await evaluateSchemaEvolutionFromFile(
+        schema_file_path,
+        schema_export_name,
+        old_schema_content
       );
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
