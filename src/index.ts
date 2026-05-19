@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { generateMock } from '@anatine/zod-mock';
+import * as yaml from 'js-yaml';
 
 export function parseZodSchema(schemaCode: string): z.ZodTypeAny {
   try {
@@ -376,6 +377,157 @@ export function generateMockVariants(
   return { schema_id: deriveSchemaId(schemaCode), count: variants.length, variants, all_valid };
 }
 
+export interface SchemaDrift {
+  field_path: string;
+  drift_type: 'missing_in_openapi' | 'missing_in_zod' | 'type_conflict' | 'required_mismatch';
+  zod_value: string | null;
+  openapi_value: string | null;
+}
+
+export interface DetectSchemaDriftResult {
+  zod_schema_name: string;
+  openapi_schema_name: string;
+  drift_count: number;
+  drifts: SchemaDrift[];
+}
+
+type JsonSchemaObject = {
+  type?: string;
+  properties?: Record<string, JsonSchemaObject>;
+  required?: string[];
+  items?: JsonSchemaObject;
+  [key: string]: unknown;
+};
+
+function normalizeType(t: string): string {
+  return t === 'integer' ? 'number' : t;
+}
+
+function diffJsonSchemas(
+  zodSchema: JsonSchemaObject,
+  openApiSchema: JsonSchemaObject,
+  path: string,
+  drifts: SchemaDrift[]
+): void {
+  const zodProps = zodSchema.properties ?? {};
+  const openApiProps = openApiSchema.properties ?? {};
+  const zodRequired = new Set(zodSchema.required ?? []);
+  const openApiRequired = new Set(openApiSchema.required ?? []);
+  const allFields = new Set([...Object.keys(zodProps), ...Object.keys(openApiProps)]);
+
+  for (const field of allFields) {
+    const fieldPath = path ? `${path}.${field}` : field;
+    const inZod = field in zodProps;
+    const inOpenApi = field in openApiProps;
+
+    if (inZod && !inOpenApi) {
+      drifts.push({
+        field_path: fieldPath,
+        drift_type: 'missing_in_openapi',
+        zod_value: zodProps[field].type ?? 'unknown',
+        openapi_value: null,
+      });
+    } else if (!inZod && inOpenApi) {
+      drifts.push({
+        field_path: fieldPath,
+        drift_type: 'missing_in_zod',
+        zod_value: null,
+        openapi_value: openApiProps[field].type ?? 'unknown',
+      });
+    } else {
+      const zf = zodProps[field];
+      const of_ = openApiProps[field];
+
+      if (zf.type && of_.type && normalizeType(zf.type) !== normalizeType(of_.type)) {
+        drifts.push({
+          field_path: fieldPath,
+          drift_type: 'type_conflict',
+          zod_value: zf.type,
+          openapi_value: of_.type,
+        });
+      }
+
+      const zodIsRequired = zodRequired.has(field);
+      const openApiIsRequired = openApiRequired.has(field);
+      if (zodIsRequired !== openApiIsRequired) {
+        drifts.push({
+          field_path: fieldPath,
+          drift_type: 'required_mismatch',
+          zod_value: zodIsRequired ? 'required' : 'optional',
+          openapi_value: openApiIsRequired ? 'required' : 'optional',
+        });
+      }
+
+      if (zf.type === 'object' || of_.type === 'object') {
+        diffJsonSchemas(zf, of_, fieldPath, drifts);
+      }
+    }
+  }
+}
+
+function extractSchemaFromOpenApi(parsed: unknown, schemaName: string): JsonSchemaObject {
+  const doc = parsed as Record<string, unknown>;
+  const components = doc.components as Record<string, unknown> | undefined;
+  const schemas = components?.schemas as Record<string, unknown> | undefined;
+  if (schemas && schemaName in schemas) {
+    return schemas[schemaName] as JsonSchemaObject;
+  }
+  // Also try top-level definitions (older OpenAPI / Swagger 2)
+  const definitions = doc.definitions as Record<string, unknown> | undefined;
+  if (definitions && schemaName in definitions) {
+    return definitions[schemaName] as JsonSchemaObject;
+  }
+  throw new Error(
+    `Schema '${schemaName}' not found in components.schemas or definitions of the OpenAPI file.`
+  );
+}
+
+function extractZodCodeFromFile(content: string, exportName: string): string {
+  // No 'm' flag: without it '$' matches end of full string, so the lazy
+  // [\s\S]*? correctly captures the whole multi-line expression up to the
+  // terminating semicolon rather than stopping at the first newline.
+  const regex = new RegExp(
+    `(?:export\\s+)?(?:const|let|var)\\s+${exportName}\\s*=\\s*([\\s\\S]*?)(?:;|$)`
+  );
+  const match = content.match(regex);
+  if (!match) {
+    throw new Error(`Could not find export '${exportName}' in the Zod file.`);
+  }
+  return match[1].trim();
+}
+
+export async function detectSchemaDrift(
+  zodFilePath: string,
+  openApiFilePath: string,
+  schemaExportName: string,
+  openApiSchemaName?: string
+): Promise<DetectSchemaDriftResult> {
+  const resolvedOpenApiName = openApiSchemaName ?? schemaExportName;
+
+  const zodFileContent = await readFile(zodFilePath, 'utf-8');
+  const schemaCode = extractZodCodeFromFile(zodFileContent, schemaExportName);
+  const zodSchema = parseZodSchema(schemaCode);
+  const zodJsonSchema = zodToJsonSchema(zodSchema) as JsonSchemaObject;
+
+  const openApiContent = await readFile(openApiFilePath, 'utf-8');
+  const parsedOpenApi =
+    openApiFilePath.endsWith('.yaml') || openApiFilePath.endsWith('.yml')
+      ? yaml.load(openApiContent)
+      : JSON.parse(openApiContent);
+
+  const openApiSchema = extractSchemaFromOpenApi(parsedOpenApi, resolvedOpenApiName);
+
+  const drifts: SchemaDrift[] = [];
+  diffJsonSchemas(zodJsonSchema, openApiSchema, '', drifts);
+
+  return {
+    zod_schema_name: schemaExportName,
+    openapi_schema_name: resolvedOpenApiName,
+    drift_count: drifts.length,
+    drifts,
+  };
+}
+
 const server = new McpServer({
   name: 'zod-contract-mock-forge-mcp',
   version: '0.1.0',
@@ -713,6 +865,46 @@ server.registerTool(
       });
 
       return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  }
+);
+
+server.registerTool(
+  'detect_schema_drift',
+  {
+    description:
+      'Compare a Zod schema in a TypeScript file against an OpenAPI spec — finds silent divergence. ' +
+      'Use when Zod and OpenAPI docs are maintained separately and may have drifted apart. ' +
+      'Reports missing fields, extra fields, type conflicts, and required/optional mismatches.',
+    inputSchema: {
+      zod_file_path: z
+        .string()
+        .describe('Absolute path to the .ts or .js file containing the Zod schema'),
+      schema_export_name: z
+        .string()
+        .describe('Name of the exported Zod schema variable (e.g. "UserSchema")'),
+      openapi_file_path: z
+        .string()
+        .describe('Absolute path to the OpenAPI spec (.yaml, .yml, or .json)'),
+      openapi_schema_name: z
+        .string()
+        .optional()
+        .describe(
+          'Schema name in components.schemas to compare against. Defaults to schema_export_name.'
+        ),
+    },
+  },
+  async ({ zod_file_path, schema_export_name, openapi_file_path, openapi_schema_name }) => {
+    try {
+      const result = await detectSchemaDrift(
+        zod_file_path,
+        openapi_file_path,
+        schema_export_name,
+        openapi_schema_name
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return errorResponse(err);
     }
